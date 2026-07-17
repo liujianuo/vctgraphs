@@ -121,9 +121,9 @@ def main():
     player_url = sys.argv[1]
     min_matches = 1
     if len(sys.argv) > 2:
-        if isinstance(sys.argv[2], int):
-            min_matches = sys.argv[2]
-        else:
+        try:
+            min_matches = int(sys.argv[2])
+        except ValueError:
             print(f"Invalid minimum match count, using default: {min_matches}")
     names = get_past_teammates(player_url, min_matches, verbose=True)
 
