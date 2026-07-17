@@ -17,7 +17,7 @@ Output:
     - Optionally writes a JSON file with the same data
 
 Requires:
-    pip install requests beautifulsoup4
+    pip install httpx beautifulsoup4
 """
 
 import argparse
@@ -30,7 +30,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Optional
 from urllib.parse import urljoin
 
-import requests
+import httpx
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.vlr.gg"
@@ -71,13 +71,13 @@ class Player:
     player_url: str
 
 
-def get_soup(url: str, session: requests.Session) -> BeautifulSoup:
+def get_soup(url: str, session: httpx.Client) -> BeautifulSoup:
     resp = session.get(url, headers=HEADERS, timeout=20)
     resp.raise_for_status()
     return BeautifulSoup(resp.text, "html.parser")
 
 
-def get_teams(event_url: str, session: requests.Session) -> List[dict]:
+def get_teams(event_url: str, session: httpx.Client) -> List[dict]:
     """Return a de-duplicated list of {name, url} for every team linked
     from the event page."""
     soup = get_soup(event_url, session)
@@ -120,7 +120,7 @@ def is_staff(role_text: str) -> bool:
     return any(kw in role_lower for kw in STAFF_KEYWORDS)
 
 
-def get_roster(team: dict, session: requests.Session) -> List[Player]:
+def get_roster(team: dict, session: httpx.Client) -> List[Player]:
     soup = get_soup(team["url"], session)
     players: List[Player] = []
 
@@ -208,7 +208,7 @@ def get_roster(team: dict, session: requests.Session) -> List[Player]:
 
 
 def scrape(event_url: str, delay: float = 1.0, verbose: bool = True) -> List[Player]:
-    session = requests.Session()
+    session = httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True)
     teams = get_teams(event_url, session)
 
     if not teams:
@@ -231,7 +231,7 @@ def scrape(event_url: str, delay: float = 1.0, verbose: bool = True) -> List[Pla
             print(f"[{i + 1}/{len(teams)}] Fetching roster for {team['name']}...")
         try:
             roster = get_roster(team, session)
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             print(f"    ! Failed to fetch {team['url']}: {e}", file=sys.stderr)
             roster = []
 

@@ -2,38 +2,88 @@
 """
 vlr_utils.py
 
-Small shared helpers for scraping vlr.gg: a common request header, a soup
-fetcher, and player/URL helpers. Kept separate so the various scrapers
-(playerscraper, teammates, matches) can share one HTTP setup.
+Small shared helpers for scraping vlr.gg: a common request header, an HTTP
+client factory, a soup fetcher, and player/URL helpers. Kept separate so the
+various scrapers (playerscraper, teammates, matches) can share one HTTP setup.
+
+Uses httpx rather than requests: under sustained scraping vlr.gg intermittently
+drops keep-alive connections, which surfaces as
+``SSLError([SSL: UNEXPECTED_EOF_WHILE_READING])``. get_soup retries those
+transient transport errors (and retryable HTTP statuses) with backoff, opening
+a fresh connection each attempt.
 
 Requires:
-    pip install requests beautifulsoup4
+    pip install httpx beautifulsoup4
 """
 
 import re
+import time
 from typing import Optional
 from urllib.parse import urljoin
 
-import requests
+import httpx
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.vlr.gg"
 
 HEADERS = {
     # A normal browser UA is friendlier / less likely to be treated as a bot
-    # than the default python-requests UA.
+    # than a default library UA.
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     )
 }
 
+DEFAULT_TIMEOUT = httpx.Timeout(30.0)
 
-def get_soup(url: str, session: requests.Session) -> BeautifulSoup:
-    """Fetch `url` with the shared headers and return a parsed BeautifulSoup."""
-    resp = session.get(url, headers=HEADERS, timeout=20)
-    resp.raise_for_status()
-    return BeautifulSoup(resp.text, "html.parser")
+# HTTP statuses worth retrying (rate limiting / transient server errors).
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
+def make_client(**kwargs) -> httpx.Client:
+    """Create an httpx.Client configured for scraping vlr.gg (browser UA,
+    generous timeout, redirects followed). Extra kwargs are passed through."""
+    kwargs.setdefault("headers", HEADERS)
+    kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
+    kwargs.setdefault("follow_redirects", True)
+    return httpx.Client(**kwargs)
+
+
+def get_soup(
+    url: str,
+    client: httpx.Client,
+    retries: int = 3,
+    backoff: float = 1.0,
+) -> BeautifulSoup:
+    """Fetch `url` and return parsed BeautifulSoup.
+
+    Retries transient transport errors (connection resets / SSL EOF that vlr.gg
+    throws when it drops a pooled connection) and retryable HTTP statuses, with
+    exponential backoff. A fresh connection is used on each retry, so a stale
+    keep-alive socket doesn't poison the whole run.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(retries + 1):
+        try:
+            resp = client.get(url)
+        except httpx.TransportError as e:
+            # Connection / SSL / read / timeout errors are transient here.
+            last_exc = e
+            if attempt < retries:
+                time.sleep(backoff * (2 ** attempt))
+                continue
+            raise
+
+        if resp.status_code in RETRY_STATUSES and attempt < retries:
+            time.sleep(backoff * (2 ** attempt))
+            continue
+
+        resp.raise_for_status()
+        return BeautifulSoup(resp.text, "html.parser")
+
+    # Only reached if every attempt hit a TransportError.
+    raise last_exc  # type: ignore[misc]
 
 
 def absolute(href: str) -> str:
