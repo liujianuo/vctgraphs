@@ -42,8 +42,9 @@ from matches import iter_match_history, parse_scoreboard_teammates
 
 def get_past_teammates(
     player_url: str,
+    min_matches: int,
     session: Optional[requests.Session] = None,
-    delay: float = 1.0,
+    delay: float = 0.2,
     verbose: bool = False,
 ) -> List[str]:
     """Return a de-duplicated, sorted list of the IGNs of every player who has
@@ -62,13 +63,22 @@ def get_past_teammates(
     try:
         # id -> ign, so the same person met across multiple matches counts once.
         teammates: Dict[str, str] = {}
+        # id -> match count
+        match_count: Dict[str, int] = {}
 
         # 1) Collect the VCT matches from the player's history, filtering on the
         #    event label shown in the history list (contains "VCT" for the whole
         #    VCT circuit — see the module docstring).
         vct_matches = [
             m for m in iter_match_history(player_url, session, delay=delay)
-            if "vct" in m["event_label"].lower()
+            if("vct"        in m["event_label"].lower() or
+               "champions"  in m["event_label"].lower() or
+               "masters"    in m["event_label"].lower() or
+               "ewc"        in m["event_label"].lower()) and not (
+               "showmatch"  in m["match_url"].lower() or
+               "main-event" in m["match_url"].lower()
+            )
+            
         ]
 
         if verbose:
@@ -87,12 +97,17 @@ def get_past_teammates(
                 continue
 
             for p in parse_scoreboard_teammates(soup, me):
-                teammates.setdefault(p["id"], p["ign"])
+                id = p["id"]
+                teammates.setdefault(id, p["ign"])
+                if id in match_count:
+                    match_count[id] = match_count[id] + 1
+                else:
+                    match_count[id] = 1
 
             if delay:
                 time.sleep(delay)  # be polite to vlr.gg
 
-        return sorted(teammates.values(), key=str.lower)
+        return sorted([teammates[k] for k in teammates.keys() if match_count[k] >= min_matches], key=str.lower) # check that each id has at least min_matches
     finally:
         if own_session:
             session.close()
@@ -104,7 +119,13 @@ def main():
         sys.exit(1)
 
     player_url = sys.argv[1]
-    names = get_past_teammates(player_url, verbose=True)
+    min_matches = 1
+    if len(sys.argv) > 2:
+        if isinstance(sys.argv[2], int):
+            min_matches = sys.argv[2]
+        else:
+            print(f"Invalid minimum match count, using default: {min_matches}")
+    names = get_past_teammates(player_url, min_matches, verbose=True)
 
     print(f"\n{len(names)} VCT teammates:")
     for name in names:
