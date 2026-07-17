@@ -11,7 +11,7 @@ which is added to sys.path below so this module works whether it's imported
 from the repo root or run directly from analysis/.
 
 Requires:
-    pip install requests beautifulsoup4
+    pip install httpx beautifulsoup4
 """
 
 import os
@@ -20,7 +20,7 @@ import sys
 import time
 from typing import Dict, List, Optional
 
-import requests
+import httpx
 from bs4 import BeautifulSoup
 
 # Make the scraper package importable.
@@ -44,7 +44,7 @@ def parse_event(event_url: str):
 
 def get_event_match_urls(
     event_url: str,
-    session: requests.Session,
+    session: httpx.Client,
     cache: Optional[Dict[str, BeautifulSoup]] = None,
 ) -> List[str]:
     """Return the full URLs of every match listed on an event's matches page."""
@@ -71,7 +71,7 @@ def get_event_match_urls(
 
 def get_event_players(
     event_url: str,
-    session: requests.Session,
+    session: httpx.Client,
     cache: Optional[Dict[str, BeautifulSoup]] = None,
     delay: float = 0.2,
     verbose: bool = False,
@@ -95,7 +95,7 @@ def get_event_players(
                 soup = get_soup(url, session)
                 if cache is not None:
                     cache[url] = soup
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             print(f"    ! Failed to fetch {url}: {e}", file=sys.stderr)
             continue
 

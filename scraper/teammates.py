@@ -27,21 +27,22 @@ Usage (as a script):
     python teammates.py https://www.vlr.gg/player/8480/aspas
 
 Requires:
-    pip install requests beautifulsoup4
+    pip install httpx beautifulsoup4
 """
 
 import sys
 from typing import List, Optional
 
-import requests
+import httpx
 
+from vlr_utils import make_client
 from matches import get_teammate_map
 
 
 def get_past_teammates(
     player_url: str,
     min_matches: int,
-    session: Optional[requests.Session] = None,
+    session: Optional[httpx.Client] = None,
     delay: float = 0.2,
     verbose: bool = False,
 ) -> List[str]:
@@ -54,7 +55,7 @@ def get_past_teammates(
     included. The player themselves is excluded from the result.
     """
     own_session = session is None
-    session = session or requests.Session()
+    session = session or make_client()
     try:
         teammates = get_teammate_map(
             player_url, session, delay=delay, verbose=verbose

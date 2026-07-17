@@ -22,7 +22,7 @@ Usage:
     python teammate_graph.py <event_url> --min-matches 2 --delay 0.3
 
 Requires:
-    pip install requests beautifulsoup4 networkx
+    pip install httpx beautifulsoup4 networkx
     # matplotlib is only needed for --draw
 """
 
@@ -31,7 +31,7 @@ import os
 import sys
 from typing import Dict
 
-import requests
+import httpx
 import networkx as nx
 
 # Make the scraper package importable (matches.py, vlr_utils.py).
@@ -39,14 +39,14 @@ _SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "s
 if _SCRAPER_DIR not in sys.path:
     sys.path.insert(0, _SCRAPER_DIR)
 
-from vlr_utils import BASE_URL  # noqa: E402
+from vlr_utils import BASE_URL, make_client  # noqa: E402
 from matches import get_teammate_map  # noqa: E402
 from vlr_event import get_event_players, parse_event  # noqa: E402
 
 
 def build_teammate_graph(
     event_url: str,
-    session: requests.Session,
+    session: httpx.Client,
     min_matches: int = 1,
     delay: float = 0.2,
     verbose: bool = True,
@@ -76,7 +76,7 @@ def build_teammate_graph(
             teammates = get_teammate_map(
                 player_url, session, delay=delay, cache=cache, verbose=False
             )
-        except (requests.RequestException, ValueError) as e:
+        except (httpx.HTTPError, ValueError) as e:
             print(f"    ! Skipping {ign} ({pid}): {e}", file=sys.stderr)
             continue
 
@@ -162,7 +162,7 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, f"{slug}_teammates.graphml")
 
-    session = requests.Session()
+    session = make_client()
     try:
         graph = build_teammate_graph(
             args.event_url, session,

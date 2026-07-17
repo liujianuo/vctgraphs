@@ -21,7 +21,7 @@ sharing the target player's tag. Because the scoreboard only lists players who
 actually played, benched/inactive roster members are naturally excluded.
 
 Requires:
-    pip install requests beautifulsoup4
+    pip install httpx beautifulsoup4
 """
 
 import re
@@ -29,7 +29,7 @@ import sys
 import time
 from typing import Dict, Iterator, List, Optional
 
-import requests
+import httpx
 from bs4 import BeautifulSoup
 
 from vlr_utils import BASE_URL, absolute, get_soup, player_id as _player_id
@@ -54,7 +54,7 @@ def is_circuit_match(match: Dict[str, str]) -> bool:
 
 def _cached_soup(
     url: str,
-    session: requests.Session,
+    session: httpx.Client,
     cache: Optional[Dict[str, BeautifulSoup]] = None,
 ) -> BeautifulSoup:
     """get_soup with an optional in-memory cache keyed by URL, so a match page
@@ -76,7 +76,7 @@ def _match_id(match_url: str) -> Optional[str]:
 
 def iter_match_history(
     player_url: str,
-    session: requests.Session,
+    session: httpx.Client,
     delay: float = 1.0,
 ) -> Iterator[Dict[str, str]]:
     """Yield {match_url, match_id, event_label} for every match in the
@@ -197,7 +197,7 @@ def parse_scoreboard_teammates(
 def get_match_teammates(
     match_url: str,
     player_id: str,
-    session: requests.Session,
+    session: httpx.Client,
 ) -> List[Dict[str, str]]:
     """Fetch a match page and return [{id, ign}] for the players on the same
     team as `player_id` (excluding the player themselves)."""
@@ -207,7 +207,7 @@ def get_match_teammates(
 
 def get_teammate_map(
     player_url: str,
-    session: requests.Session,
+    session: httpx.Client,
     delay: float = 0.2,
     cache: Optional[Dict[str, BeautifulSoup]] = None,
     verbose: bool = False,
@@ -240,7 +240,7 @@ def get_teammate_map(
                   f"{m['event_label']} — {m['match_url']}")
         try:
             soup = _cached_soup(m["match_url"], session, cache)
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             print(f"    ! Failed to fetch {m['match_url']}: {e}",
                   file=sys.stderr)
             continue
