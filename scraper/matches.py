@@ -25,6 +25,7 @@ Requires:
 """
 
 import re
+import sys
 import time
 from typing import Dict, Iterator, List, Optional
 
@@ -32,6 +33,38 @@ import requests
 from bs4 import BeautifulSoup
 
 from vlr_utils import BASE_URL, absolute, get_soup, player_id as _player_id
+
+# Event-label / URL rules for what counts as a "VCT circuit" match. Kept in one
+# place so the CLI (teammates.py) and the analysis graph builder agree on which
+# matches define a "previous teammate".
+CIRCUIT_KEYWORDS = ("vct", "champions", "masters", "ewc")
+EXCLUDE_URL_SUBSTRINGS = ("showmatch", "main-event")
+
+
+def is_circuit_match(match: Dict[str, str]) -> bool:
+    """True if a match (as yielded by iter_match_history) belongs to the VCT
+    circuit: its history-page event label contains one of CIRCUIT_KEYWORDS and
+    its URL isn't an excluded showmatch/main-event."""
+    label = (match.get("event_label") or "").lower()
+    url = (match.get("match_url") or "").lower()
+    if not any(kw in label for kw in CIRCUIT_KEYWORDS):
+        return False
+    return not any(bad in url for bad in EXCLUDE_URL_SUBSTRINGS)
+
+
+def _cached_soup(
+    url: str,
+    session: requests.Session,
+    cache: Optional[Dict[str, BeautifulSoup]] = None,
+) -> BeautifulSoup:
+    """get_soup with an optional in-memory cache keyed by URL, so a match page
+    shared across several players is fetched only once."""
+    if cache is not None and url in cache:
+        return cache[url]
+    soup = get_soup(url, session)
+    if cache is not None:
+        cache[url] = soup
+    return soup
 
 
 def _match_id(match_url: str) -> Optional[str]:
@@ -110,6 +143,33 @@ def match_event_title(soup: BeautifulSoup) -> str:
     return header.get_text(" ", strip=True)
 
 
+def parse_scoreboard_players(soup: BeautifulSoup) -> List[Dict[str, str]]:
+    """Given a fetched match page, return [{id, ign, tag}] for every player on
+    the scoreboard (both teams), de-duplicated by player id. `tag` is the team
+    tag shown on each row (e.g. "MIBR"), which identifies the player's team in
+    this match."""
+    players: Dict[str, Dict[str, str]] = {}
+    # Rows repeat per map (All maps + each map tab); dedupe by player id.
+    for row in soup.select(".ovw-player"):
+        link = row.select_one("a[href^='/player/']")
+        if not link:
+            continue
+        m = re.search(r"/player/(\d+)", link["href"])
+        if not m:
+            continue
+        pid = m.group(1)
+        if pid in players:
+            continue
+        name_tag = row.select_one(".ovw-player-name")
+        tag_tag = row.select_one(".ovw-player-tag")
+        players[pid] = {
+            "id": pid,
+            "ign": name_tag.get_text(strip=True) if name_tag else "",
+            "tag": tag_tag.get_text(strip=True) if tag_tag else "",
+        }
+    return list(players.values())
+
+
 def parse_scoreboard_teammates(
     soup: BeautifulSoup,
     player_id: str,
@@ -120,37 +180,18 @@ def parse_scoreboard_teammates(
 
     Returns an empty list if the player can't be located on the scoreboard.
     """
-    # Collect every scoreboard row: (player_id, ign, team_tag). Rows repeat
-    # per map (All maps + each map tab); dedupe by player id.
-    rows: List[Dict[str, str]] = []
-    for row in soup.select(".ovw-player"):
-        link = row.select_one("a[href^='/player/']")
-        if not link:
-            continue
-        m = re.search(r"/player/(\d+)", link["href"])
-        if not m:
-            continue
-        name_tag = row.select_one(".ovw-player-name")
-        tag_tag = row.select_one(".ovw-player-tag")
-        rows.append({
-            "id": m.group(1),
-            "ign": name_tag.get_text(strip=True) if name_tag else "",
-            "tag": tag_tag.get_text(strip=True) if tag_tag else "",
-        })
+    rows = parse_scoreboard_players(soup)
 
     # Which team tag did the target player play under in this match?
     my_tags = {r["tag"] for r in rows if r["id"] == player_id and r["tag"]}
     if not my_tags:
         return []
 
-    teammates: Dict[str, str] = {}
-    for r in rows:
-        if r["id"] == player_id:
-            continue
-        if r["tag"] in my_tags and r["ign"]:
-            teammates.setdefault(r["id"], r["ign"])
-
-    return [{"id": pid, "ign": ign} for pid, ign in teammates.items()]
+    return [
+        {"id": r["id"], "ign": r["ign"]}
+        for r in rows
+        if r["id"] != player_id and r["tag"] in my_tags and r["ign"]
+    ]
 
 
 def get_match_teammates(
@@ -162,3 +203,53 @@ def get_match_teammates(
     team as `player_id` (excluding the player themselves)."""
     soup = get_soup(match_url, session)
     return parse_scoreboard_teammates(soup, player_id)
+
+
+def get_teammate_map(
+    player_url: str,
+    session: requests.Session,
+    delay: float = 0.2,
+    cache: Optional[Dict[str, BeautifulSoup]] = None,
+    verbose: bool = False,
+) -> Dict[str, Dict[str, object]]:
+    """Walk a player's entire match history and return every player who has
+    been on the same team as them in a VCT-circuit match (see is_circuit_match),
+    keyed by player id:
+
+        {teammate_id: {"ign": str, "matches": int}}
+
+    `matches` is how many circuit matches the two shared a team in. The target
+    player is excluded. An optional `cache` (url -> soup) lets callers share
+    fetched match pages across several players.
+    """
+    me = _player_id(player_url)
+    if not me:
+        raise ValueError(f"Could not parse a player id from URL: {player_url}")
+
+    circuit_matches = [
+        m for m in iter_match_history(player_url, session, delay=delay)
+        if is_circuit_match(m)
+    ]
+    if verbose:
+        print(f"Found {len(circuit_matches)} VCT matches for {player_url}")
+
+    teammates: Dict[str, Dict[str, object]] = {}
+    for i, m in enumerate(circuit_matches):
+        if verbose:
+            print(f"[{i + 1}/{len(circuit_matches)}] "
+                  f"{m['event_label']} — {m['match_url']}")
+        try:
+            soup = _cached_soup(m["match_url"], session, cache)
+        except requests.RequestException as e:
+            print(f"    ! Failed to fetch {m['match_url']}: {e}",
+                  file=sys.stderr)
+            continue
+
+        for p in parse_scoreboard_teammates(soup, me):
+            entry = teammates.setdefault(p["id"], {"ign": p["ign"], "matches": 0})
+            entry["matches"] += 1
+
+        if delay:
+            time.sleep(delay)  # be polite to vlr.gg
+
+    return teammates

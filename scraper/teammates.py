@@ -31,13 +31,11 @@ Requires:
 """
 
 import sys
-import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import requests
 
-from vlr_utils import get_soup, player_id as _player_id
-from matches import iter_match_history, parse_scoreboard_teammates
+from matches import get_teammate_map
 
 
 def get_past_teammates(
@@ -52,62 +50,20 @@ def get_past_teammates(
     matches at VCT events (the match-history event label contains "VCT",
     case-insensitive; see the module docstring for what that covers).
 
-    The player themselves is excluded from the result.
+    Only teammates the player shared at least `min_matches` matches with are
+    included. The player themselves is excluded from the result.
     """
     own_session = session is None
     session = session or requests.Session()
-    me = _player_id(player_url)
-    if not me:
-        raise ValueError(f"Could not parse a player id from URL: {player_url}")
-
     try:
-        # id -> ign, so the same person met across multiple matches counts once.
-        teammates: Dict[str, str] = {}
-        # id -> match count
-        match_count: Dict[str, int] = {}
-
-        # 1) Collect the VCT matches from the player's history, filtering on the
-        #    event label shown in the history list (contains "VCT" for the whole
-        #    VCT circuit — see the module docstring).
-        vct_matches = [
-            m for m in iter_match_history(player_url, session, delay=delay)
-            if("vct"        in m["event_label"].lower() or
-               "champions"  in m["event_label"].lower() or
-               "masters"    in m["event_label"].lower() or
-               "ewc"        in m["event_label"].lower()) and not (
-               "showmatch"  in m["match_url"].lower() or
-               "main-event" in m["match_url"].lower()
-            )
-            
-        ]
-
-        if verbose:
-            print(f"Found {len(vct_matches)} VCT matches for {player_url}")
-
-        # 2) For each VCT match, read the scoreboard and add teammates.
-        for i, m in enumerate(vct_matches):
-            if verbose:
-                print(f"[{i + 1}/{len(vct_matches)}] "
-                      f"{m['event_label']} — {m['match_url']}")
-            try:
-                soup = get_soup(m["match_url"], session)
-            except requests.RequestException as e:
-                print(f"    ! Failed to fetch {m['match_url']}: {e}",
-                      file=sys.stderr)
-                continue
-
-            for p in parse_scoreboard_teammates(soup, me):
-                id = p["id"]
-                teammates.setdefault(id, p["ign"])
-                if id in match_count:
-                    match_count[id] = match_count[id] + 1
-                else:
-                    match_count[id] = 1
-
-            if delay:
-                time.sleep(delay)  # be polite to vlr.gg
-
-        return sorted([teammates[k] for k in teammates.keys() if match_count[k] >= min_matches], key=str.lower) # check that each id has at least min_matches
+        teammates = get_teammate_map(
+            player_url, session, delay=delay, verbose=verbose
+        )
+        return sorted(
+            (entry["ign"] for entry in teammates.values()
+             if entry["matches"] >= min_matches),
+            key=str.lower,
+        )
     finally:
         if own_session:
             session.close()
