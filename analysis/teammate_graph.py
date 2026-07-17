@@ -39,8 +39,8 @@ _SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "s
 if _SCRAPER_DIR not in sys.path:
     sys.path.insert(0, _SCRAPER_DIR)
 
-from vlr_utils import BASE_URL, make_client  # noqa: E402
-from matches import get_teammate_map  # noqa: E402
+from vlr_utils import BASE_URL, make_client  # type: ignore
+from matches import get_teammate_map  # type: ignore
 from vlr_event import get_event_players, parse_event  # noqa: E402
 
 
