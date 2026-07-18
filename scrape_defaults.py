@@ -88,3 +88,11 @@ DEFAULT_PLAYERS_CSV = os.path.join("data", "players.csv")
 
 # Node fill colour used when drawing the teammate graph.
 GRAPH_NODE_COLOR = "#4c78a8"
+
+# Edge line width (in points) scales with how many matches two players shared.
+# The thinnest and thickest edges are clamped to these bounds so a single-match
+# link stays visible and a heavily-shared link never overwhelms the drawing.
+EDGE_WIDTH_MIN = 0.6
+EDGE_WIDTH_MAX = 6.0
+# Opacity of edges. Slightly translucent so overlapping links stay legible.
+EDGE_ALPHA = 0.35

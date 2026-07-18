@@ -48,6 +48,9 @@ from matches import get_teammate_map  # type: ignore
 from vlr_event import get_event_players, parse_event  # noqa: E402
 from scrape_defaults import (  # noqa: E402
     DEFAULT_DB_PATH,
+    EDGE_ALPHA,
+    EDGE_WIDTH_MAX,
+    EDGE_WIDTH_MIN,
     GRAPH_NODE_COLOR,
     MINIMUM_MATCH_DEFAULT,
     PLAYER_META_TABLE_NAME,
@@ -167,8 +170,42 @@ def build_teammate_graph(
     return graph
 
 
+def scale_edge_widths(
+    weights,
+    width_min: float = EDGE_WIDTH_MIN,
+    width_max: float = EDGE_WIDTH_MAX,
+):
+    """Map each edge's shared-match count to a line width in [width_min,
+    width_max].
+
+    The mapping is linear in the *square root* of the weight: shared-match
+    counts are heavily right-skewed (most pairs share a match or two, a few
+    share many), so a plain linear scale would leave nearly every edge pinned at
+    the thin end. Taking the square root spreads the common low weights across a
+    usable range while still letting the busiest links reach the maximum.
+
+    The lightest weight always maps to width_min and the heaviest to width_max,
+    so both extremes stay readable. When every edge has the same weight (or
+    there is a single edge), they all get the midpoint width.
+    """
+    weights = list(weights)
+    if not weights:
+        return []
+
+    roots = [w ** 0.5 for w in weights]
+    lo, hi = min(roots), max(roots)
+    if hi == lo:
+        return [(width_min + width_max) / 2 for _ in roots]
+
+    span = width_max - width_min
+    return [width_min + span * (r - lo) / (hi - lo) for r in roots]
+
+
 def draw_graph(graph: nx.Graph, path: str):
-    """Render the graph to an image file with matplotlib (spring layout)."""
+    """Render the graph to an image file with matplotlib (spring layout).
+
+    Edge thickness encodes how many matches the two players shared a team in
+    (the edge `weight`), scaled to a readable range (see scale_edge_widths)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -179,7 +216,15 @@ def draw_graph(graph: nx.Graph, path: str):
     plt.figure(figsize=(16, 16))
     degrees = dict(graph.degree())
     node_sizes = [200 + 120 * degrees[n] for n in graph.nodes()]
-    nx.draw_networkx_edges(graph, pos, alpha=0.25)
+
+    # Draw edges with a width proportional to their shared-match weight. Pass an
+    # explicit edgelist so the width list lines up with the edges being drawn.
+    edges = list(graph.edges(data=True))
+    edge_list = [(u, v) for u, v, _ in edges]
+    edge_widths = scale_edge_widths(d.get("weight", 1) for _, _, d in edges)
+
+    nx.draw_networkx_edges(graph, pos, edgelist=edge_list,
+                           width=edge_widths, alpha=EDGE_ALPHA)
     nx.draw_networkx_nodes(graph, pos, node_size=node_sizes,
                            node_color=GRAPH_NODE_COLOR, alpha=0.9)
     nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
