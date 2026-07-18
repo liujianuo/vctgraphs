@@ -27,6 +27,7 @@ Requires:
 """
 
 import argparse
+import math
 import os
 import sys
 
@@ -51,6 +52,9 @@ from scrape_defaults import (  # noqa: E402
     EDGE_ALPHA,
     EDGE_WIDTH_MAX,
     EDGE_WIDTH_MIN,
+    GRAPH_COMPONENT_PADDING,
+    GRAPH_LAYOUT_ITERATIONS,
+    GRAPH_LAYOUT_SEED,
     GRAPH_NODE_COLOR,
     MINIMUM_MATCH_DEFAULT,
     PLAYER_META_TABLE_NAME,
@@ -201,17 +205,98 @@ def scale_edge_widths(
     return [width_min + span * (r - lo) / (hi - lo) for r in roots]
 
 
-def draw_graph(graph: nx.Graph, path: str):
-    """Render the graph to an image file with matplotlib (spring layout).
+def _component_layout(sub: nx.Graph) -> dict:
+    """Force-directed layout for a single connected component.
 
-    Edge thickness encodes how many matches the two players shared a team in
+    Frequent teammates attract more strongly (so co-players cluster) via a
+    per-edge `layout_weight` = sqrt(shared matches); the square root keeps a
+    single heavily-shared pair from collapsing onto one point while still
+    pulling tight groups together. The layout's spread scales with sqrt(n) so
+    node spacing stays roughly constant no matter how big the component is —
+    nodes end up separated but close, not bunched.
+    """
+    n = sub.number_of_nodes()
+    if n == 1:
+        return {next(iter(sub.nodes())): (0.0, 0.0)}
+
+    return nx.spring_layout(
+        sub,
+        weight="layout_weight",
+        scale=math.sqrt(n),
+        iterations=GRAPH_LAYOUT_ITERATIONS,
+        seed=GRAPH_LAYOUT_SEED,
+    )
+
+
+def compute_layout(graph: nx.Graph) -> dict:
+    """Position nodes so that groups of players who've played together cluster,
+    and so separate components stay compact and near each other (rather than a
+    dense central blob with a few nodes flung far away).
+
+    Each connected component is laid out on its own with a weight-driven spring
+    layout, then the components are shelf-packed into a roughly square area with
+    a little padding between them.
+    """
+    # Weight the layout by shared matches so tight-knit groups pull together.
+    for _, _, d in graph.edges(data=True):
+        d["layout_weight"] = math.sqrt(d.get("weight", 1))
+
+    components = sorted(nx.connected_components(graph), key=len, reverse=True)
+    if not components:
+        return {}
+
+    # Lay out each component and recenter it on the origin, tracking its box.
+    boxes = []  # (positions, width, height)
+    for comp in components:
+        p = _component_layout(graph.subgraph(comp))
+        xs = [xy[0] for xy in p.values()]
+        ys = [xy[1] for xy in p.values()]
+        cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+        p = {node: (x - cx, y - cy) for node, (x, y) in p.items()}
+        # Singletons have a zero-size box; give them a nominal footprint so the
+        # packer leaves room around them.
+        w = (max(xs) - min(xs)) or 1.0
+        h = (max(ys) - min(ys)) or 1.0
+        boxes.append((p, w, h))
+
+    # Shelf-pack the component boxes: fill a row left-to-right until it would
+    # exceed a target width, then wrap. Target width ≈ sqrt(total area) keeps
+    # the whole drawing roughly square.
+    pad = GRAPH_COMPONENT_PADDING
+    total_area = sum((w + pad) * (h + pad) for _, w, h in boxes)
+    max_width = max(
+        max((w for _, w, _ in boxes), default=1.0),
+        math.sqrt(total_area),
+    )
+
+    pos = {}
+    x = y = row_height = 0.0
+    for p, w, h in boxes:
+        if x > 0.0 and x + w > max_width:
+            x = 0.0
+            y -= row_height + pad
+            row_height = 0.0
+        cx, cy = x + w / 2, y - h / 2
+        for node, (nx_, ny_) in p.items():
+            pos[node] = (cx + nx_, cy + ny_)
+        x += w + pad
+        row_height = max(row_height, h)
+
+    return pos
+
+
+def draw_graph(graph: nx.Graph, path: str):
+    """Render the graph to an image file with matplotlib.
+
+    Node positions come from compute_layout (clustered, component-packed) and
+    edge thickness encodes how many matches the two players shared a team in
     (the edge `weight`), scaled to a readable range (see scale_edge_widths)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     labels = {n: d.get("ign", n) for n, d in graph.nodes(data=True)}
-    pos = nx.spring_layout(graph, k=0.5, seed=42)
+    pos = compute_layout(graph)
 
     plt.figure(figsize=(16, 16))
     degrees = dict(graph.degree())
