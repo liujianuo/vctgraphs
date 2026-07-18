@@ -96,3 +96,11 @@ EDGE_WIDTH_MIN = 0.6
 EDGE_WIDTH_MAX = 6.0
 # Opacity of edges. Slightly translucent so overlapping links stay legible.
 EDGE_ALPHA = 0.35
+
+# Force-directed layout: fixed seed keeps drawings reproducible; more iterations
+# let the layout settle so clusters separate cleanly instead of bunching up.
+GRAPH_LAYOUT_SEED = 42
+GRAPH_LAYOUT_ITERATIONS = 300
+# Blank space (in layout units) left between separate components when they're
+# packed together, so disconnected groups sit near each other but don't touch.
+GRAPH_COMPONENT_PADDING = 1.5
