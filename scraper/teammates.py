@@ -30,6 +30,7 @@ Requires:
     pip install httpx beautifulsoup4
 """
 
+import os
 import sys
 from typing import List, Optional
 
@@ -38,12 +39,19 @@ import httpx
 from vlr_utils import make_client
 from matches import get_teammate_map
 
+# Read shared configuration from the repo-root scrape_defaults.py.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from scrape_defaults import MINIMUM_MATCH_DEFAULT, QUERY_DELAY_DEFAULT  # noqa: E402
+
 
 def get_past_teammates(
     player_url: str,
     min_matches: int,
     session: Optional[httpx.Client] = None,
-    delay: float = 0.2,
+    delay: float = QUERY_DELAY_DEFAULT,
     verbose: bool = False,
 ) -> List[str]:
     """Return a de-duplicated, sorted list of the IGNs of every player who has
@@ -76,7 +84,7 @@ def main():
         sys.exit(1)
 
     player_url = sys.argv[1]
-    min_matches = 1
+    min_matches = MINIMUM_MATCH_DEFAULT
     if len(sys.argv) > 2:
         try:
             min_matches = int(sys.argv[2])

@@ -16,7 +16,9 @@ Requires:
     pip install httpx beautifulsoup4
 """
 
+import os
 import re
+import sys
 import time
 from typing import Optional
 from urllib.parse import urljoin
@@ -24,21 +26,21 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-BASE_URL = "https://www.vlr.gg"
+# Read shared configuration from the repo-root scrape_defaults.py.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-HEADERS = {
-    # A normal browser UA is friendlier / less likely to be treated as a bot
-    # than a default library UA.
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    )
-}
+from scrape_defaults import (  # noqa: E402
+    BASE_URL,
+    HEADERS,
+    REQUEST_TIMEOUT_SECONDS,
+    RETRY_ATTEMPTS,
+    RETRY_BACKOFF,
+    RETRY_STATUSES,
+)
 
-DEFAULT_TIMEOUT = httpx.Timeout(30.0)
-
-# HTTP statuses worth retrying (rate limiting / transient server errors).
-RETRY_STATUSES = {429, 500, 502, 503, 504}
+DEFAULT_TIMEOUT = httpx.Timeout(REQUEST_TIMEOUT_SECONDS)
 
 
 def make_client(**kwargs) -> httpx.Client:
@@ -53,8 +55,8 @@ def make_client(**kwargs) -> httpx.Client:
 def get_soup(
     url: str,
     client: httpx.Client,
-    retries: int = 3,
-    backoff: float = 1.0,
+    retries: int = RETRY_ATTEMPTS,
+    backoff: float = RETRY_BACKOFF,
 ) -> BeautifulSoup:
     """Fetch `url` and return parsed BeautifulSoup.
 

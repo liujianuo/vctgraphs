@@ -37,13 +37,19 @@ import sqlite3
 
 from vlr_utils import BASE_URL, absolute, get_soup, player_id as _player_id
 
-# Event-label / URL rules for what counts as a "VCT circuit" match. Kept in one
-# place so the CLI (teammates.py) and the analysis graph builder agree on which
-# matches define a "previous teammate".
-CIRCUIT_KEYWORDS = ("vct", "champions", "masters", "ewc")
-EXCLUDE_URL_SUBSTRINGS = ("showmatch", "main-event")
-PLAYER_META_TABLE_NAME = "players"
-PLAYER_TEAMMATE_TABLE_NAME = "teammates"
+# Read shared configuration from the repo-root scrape_defaults.py.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from scrape_defaults import (  # noqa: E402
+    CIRCUIT_KEYWORDS,
+    DEFAULT_DB_PATH,
+    EXCLUDE_URL_SUBSTRINGS,
+    PLAYER_META_TABLE_NAME,
+    PLAYER_TEAMMATE_TABLE_NAME,
+    QUERY_DELAY_DEFAULT,
+)
 
 
 def is_circuit_match(match: dict[str, str]) -> bool:
@@ -82,7 +88,7 @@ def _match_id(match_url: str) -> Optional[str]:
 def iter_match_history(
     player_url: str,
     session: httpx.Client,
-    delay: float = 1.0,
+    delay: float = QUERY_DELAY_DEFAULT,
 ) -> Iterator[dict[str, str]]:
     """Yield {match_url, match_id, event_label} for every match in the
     player's history, walking the paginated /player/matches/ view until an
@@ -219,7 +225,7 @@ def get_id_from_url(
 
 def get_last_match(
     player_url: str,
-    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db")
+    db_path: str = DEFAULT_DB_PATH
 ) -> str:
     last_match = None
     db = sqlite3.connect(db_path)
@@ -246,7 +252,7 @@ def get_last_match(
 def append_saved_data(
     player_id: str,
     teammate_dict: dict[str, dict[str, object]],
-    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db")
+    db_path: str = DEFAULT_DB_PATH
 ) -> None:
     new_data = dict()
     db = sqlite3.connect(db_path)
@@ -268,7 +274,7 @@ def update_saved_data(
     player_id: str,
     teammate_dict: dict[str, dict[str, object]],
     last_match: str,
-    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db")
+    db_path: str = DEFAULT_DB_PATH
 ) -> None:
     db = sqlite3.connect(db_path)
     try:
@@ -296,9 +302,9 @@ def update_saved_data(
 def get_teammate_map(
     player_url: str,
     session: httpx.Client,
-    delay: float = 0.2,
+    delay: float = QUERY_DELAY_DEFAULT,
     cache: Optional[dict[str, BeautifulSoup]] = None,
-    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db"),
+    db_path: str = DEFAULT_DB_PATH,
     verbose: bool = False,
 ) -> dict[str, dict[str, object]]:
     """Walk a player's entire match history and return every player who has

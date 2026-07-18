@@ -35,14 +35,28 @@ import networkx as nx
 
 import sqlite3
 
-# Make the scraper package importable (matches.py, vlr_utils.py).
-_SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scraper")
-if _SCRAPER_DIR not in sys.path:
-    sys.path.insert(0, _SCRAPER_DIR)
+# Make the scraper package (matches.py, vlr_utils.py) and the repo-root
+# scrape_defaults.py importable.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SCRAPER_DIR = os.path.join(_REPO_ROOT, "scraper")
+for _p in (_REPO_ROOT, _SCRAPER_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from vlr_utils import BASE_URL, make_client  # type: ignore
 from matches import get_teammate_map  # type: ignore
 from vlr_event import get_event_players, parse_event  # noqa: E402
+from scrape_defaults import (  # noqa: E402
+    DEFAULT_DB_PATH,
+    EDGE_ALPHA,
+    EDGE_WIDTH_MAX,
+    EDGE_WIDTH_MIN,
+    GRAPH_NODE_COLOR,
+    MINIMUM_MATCH_DEFAULT,
+    PLAYER_META_TABLE_NAME,
+    PLAYER_TEAMMATE_TABLE_NAME,
+    QUERY_DELAY_DEFAULT,
+)
 """
 SQL Schema
 ┌───────────────────────────────┐
@@ -63,11 +77,11 @@ SQL Schema
 └───────────────────────────────┘
 """
 def get_previous_teammates(
-    player_url: str, 
-    session: httpx.Client, 
-    delay: float = 0.2, 
-    cache: dict[str, object] = {}, 
-    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db"),
+    player_url: str,
+    session: httpx.Client,
+    delay: float = QUERY_DELAY_DEFAULT,
+    cache: dict[str, object] = {},
+    db_path: str = DEFAULT_DB_PATH,
     verbose=False
 ) -> dict[str, dict[str, object]]:
     """Get previous teammates of given player. Queries only up until last queried match stored in SQL database
@@ -76,15 +90,15 @@ def get_previous_teammates(
     # check if tables exist, and if not, generates tables
     db = sqlite3.connect(db_path)
     cursor = db.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {PLAYER_META_TABLE_NAME} (
             player_id TEXT NOT NULL PRIMARY KEY,
             last_match_url TEXT
         );
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS teammates (
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {PLAYER_TEAMMATE_TABLE_NAME} (
             player_id   TEXT NOT NULL,
             teammate_id   TEXT NOT NULL,
             teammate_ign  TEXT NOT NULL,
@@ -103,8 +117,8 @@ def get_previous_teammates(
 def build_teammate_graph(
     event_url: str,
     session: httpx.Client,
-    min_matches: int = 1,
-    delay: float = 0.2,
+    min_matches: int = MINIMUM_MATCH_DEFAULT,
+    delay: float = QUERY_DELAY_DEFAULT,
     verbose: bool = True,
 ) -> nx.Graph:
     """Build and return the event's teammate-connectivity graph (see module
@@ -156,8 +170,42 @@ def build_teammate_graph(
     return graph
 
 
+def scale_edge_widths(
+    weights,
+    width_min: float = EDGE_WIDTH_MIN,
+    width_max: float = EDGE_WIDTH_MAX,
+):
+    """Map each edge's shared-match count to a line width in [width_min,
+    width_max].
+
+    The mapping is linear in the *square root* of the weight: shared-match
+    counts are heavily right-skewed (most pairs share a match or two, a few
+    share many), so a plain linear scale would leave nearly every edge pinned at
+    the thin end. Taking the square root spreads the common low weights across a
+    usable range while still letting the busiest links reach the maximum.
+
+    The lightest weight always maps to width_min and the heaviest to width_max,
+    so both extremes stay readable. When every edge has the same weight (or
+    there is a single edge), they all get the midpoint width.
+    """
+    weights = list(weights)
+    if not weights:
+        return []
+
+    roots = [w ** 0.5 for w in weights]
+    lo, hi = min(roots), max(roots)
+    if hi == lo:
+        return [(width_min + width_max) / 2 for _ in roots]
+
+    span = width_max - width_min
+    return [width_min + span * (r - lo) / (hi - lo) for r in roots]
+
+
 def draw_graph(graph: nx.Graph, path: str):
-    """Render the graph to an image file with matplotlib (spring layout)."""
+    """Render the graph to an image file with matplotlib (spring layout).
+
+    Edge thickness encodes how many matches the two players shared a team in
+    (the edge `weight`), scaled to a readable range (see scale_edge_widths)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -168,9 +216,17 @@ def draw_graph(graph: nx.Graph, path: str):
     plt.figure(figsize=(16, 16))
     degrees = dict(graph.degree())
     node_sizes = [200 + 120 * degrees[n] for n in graph.nodes()]
-    nx.draw_networkx_edges(graph, pos, alpha=0.25)
+
+    # Draw edges with a width proportional to their shared-match weight. Pass an
+    # explicit edgelist so the width list lines up with the edges being drawn.
+    edges = list(graph.edges(data=True))
+    edge_list = [(u, v) for u, v, _ in edges]
+    edge_widths = scale_edge_widths(d.get("weight", 1) for _, _, d in edges)
+
+    nx.draw_networkx_edges(graph, pos, edgelist=edge_list,
+                           width=edge_widths, alpha=EDGE_ALPHA)
     nx.draw_networkx_nodes(graph, pos, node_size=node_sizes,
-                           node_color="#4c78a8", alpha=0.9)
+                           node_color=GRAPH_NODE_COLOR, alpha=0.9)
     nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
     plt.axis("off")
     plt.tight_layout()
@@ -204,10 +260,12 @@ def main():
                              "<event-slug>_teammates.graphml)")
     parser.add_argument("--draw", default=None,
                         help="Optional PNG path to render the graph (needs matplotlib)")
-    parser.add_argument("--min-matches", type=int, default=1,
-                        help="Minimum shared VCT matches for an edge (default: 1)")
-    parser.add_argument("--delay", type=float, default=0.2,
-                        help="Delay between requests in seconds (default: 0.2)")
+    parser.add_argument("--min-matches", type=int, default=MINIMUM_MATCH_DEFAULT,
+                        help="Minimum shared VCT matches for an edge "
+                             f"(default: {MINIMUM_MATCH_DEFAULT})")
+    parser.add_argument("--delay", type=float, default=QUERY_DELAY_DEFAULT,
+                        help="Delay between requests in seconds "
+                             f"(default: {QUERY_DELAY_DEFAULT})")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 

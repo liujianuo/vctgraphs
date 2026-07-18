@@ -23,13 +23,16 @@ from typing import Dict, List, Optional
 import httpx
 from bs4 import BeautifulSoup
 
-# Make the scraper package importable.
-_SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scraper")
-if _SCRAPER_DIR not in sys.path:
-    sys.path.insert(0, _SCRAPER_DIR)
+# Make the scraper package and the repo-root scrape_defaults.py importable.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SCRAPER_DIR = os.path.join(_REPO_ROOT, "scraper")
+for _p in (_REPO_ROOT, _SCRAPER_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from vlr_utils import BASE_URL, absolute, get_soup  # noqa: E402
 from matches import parse_scoreboard_players  # noqa: E402
+from scrape_defaults import QUERY_DELAY_DEFAULT  # noqa: E402
 
 
 def parse_event(event_url: str):
@@ -73,7 +76,7 @@ def get_event_players(
     event_url: str,
     session: httpx.Client,
     cache: Optional[Dict[str, BeautifulSoup]] = None,
-    delay: float = 0.2,
+    delay: float = QUERY_DELAY_DEFAULT,
     verbose: bool = False,
 ) -> Dict[str, str]:
     """Return {player_id: ign} for every player who appeared on a scoreboard in
