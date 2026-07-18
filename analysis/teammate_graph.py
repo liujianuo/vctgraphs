@@ -29,10 +29,11 @@ Requires:
 import argparse
 import os
 import sys
-from typing import Dict
 
 import httpx
 import networkx as nx
+
+import sqlite3
 
 # Make the scraper package importable (matches.py, vlr_utils.py).
 _SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scraper")
@@ -42,6 +43,61 @@ if _SCRAPER_DIR not in sys.path:
 from vlr_utils import BASE_URL, make_client  # type: ignore
 from matches import get_teammate_map  # type: ignore
 from vlr_event import get_event_players, parse_event  # noqa: E402
+"""
+SQL Schema
+┌───────────────────────────────┐
+│           players             │
+├───────────────────────────────┤
+│ PK  player_id        STR      │
+│     last_match_url   VARCHAR  │
+└───────────────────────────────┘
+
+┌───────────────────────────────┐
+│          teammates            │
+├───────────────────────────────┤
+│     player_id         STR     │
+│     teammate_id       STR     │
+│     teammate_ign      STR     │
+│     count             INT     │
+│ PK  (p_id, t_id)              │
+└───────────────────────────────┘
+"""
+def get_previous_teammates(
+    player_url: str, 
+    session: httpx.Client, 
+    delay: float = 0.2, 
+    cache: dict[str, object] = {}, 
+    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db"),
+    verbose=False
+) -> dict[str, dict[str, object]]:
+    """Get previous teammates of given player. Queries only up until last queried match stored in SQL database
+    and retrieves rest of information from database.
+    """
+    # check if tables exist, and if not, generates tables
+    db = sqlite3.connect(db_path)
+    cursor = db.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            player_id TEXT NOT NULL PRIMARY KEY,
+            last_match_url TEXT
+        );
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS teammates (
+            player_id   TEXT NOT NULL,
+            teammate_id   TEXT NOT NULL,
+            teammate_ign  TEXT NOT NULL,
+            count   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (player_id, teammate_id)
+        )
+    """)
+
+    db.commit()
+    db.close()
+    return get_teammate_map(
+        player_url, session, delay=delay, cache=cache, db_path = db_path, verbose=verbose
+    )
 
 
 def build_teammate_graph(
@@ -57,7 +113,7 @@ def build_teammate_graph(
     # A single soup cache shared across the whole build: match pages recur both
     # across the event's own matches and across players' histories, so caching
     # them saves a large number of requests.
-    cache: Dict[str, object] = {}
+    cache: dict[str, object] = {}
 
     players = get_event_players(event_url, session, cache, delay=delay, verbose=verbose)
     if verbose:
@@ -73,7 +129,7 @@ def build_teammate_graph(
             print(f"=== [{i}/{len(players)}] teammates of {ign} ({pid}) ===")
         player_url = f"{BASE_URL}/player/{pid}/{ign}"
         try:
-            teammates = get_teammate_map(
+            teammates = get_previous_teammates(
                 player_url, session, delay=delay, cache=cache, verbose=False
             )
         except (httpx.HTTPError, ValueError) as e:

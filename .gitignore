@@ -1,4 +1,7 @@
 .claude
 __pycache__
 analysis/output/
-
+data
+*.graphml
+*.png
+graphutils.py
