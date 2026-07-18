@@ -27,10 +27,13 @@ Requires:
 import re
 import sys
 import time
-from typing import Dict, Iterator, List, Optional
+from typing import Iterator, List, Optional
+import os
+from urllib.parse import urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
+import sqlite3
 
 from vlr_utils import BASE_URL, absolute, get_soup, player_id as _player_id
 
@@ -39,9 +42,11 @@ from vlr_utils import BASE_URL, absolute, get_soup, player_id as _player_id
 # matches define a "previous teammate".
 CIRCUIT_KEYWORDS = ("vct", "champions", "masters", "ewc")
 EXCLUDE_URL_SUBSTRINGS = ("showmatch", "main-event")
+PLAYER_META_TABLE_NAME = "players"
+PLAYER_TEAMMATE_TABLE_NAME = "teammates"
 
 
-def is_circuit_match(match: Dict[str, str]) -> bool:
+def is_circuit_match(match: dict[str, str]) -> bool:
     """True if a match (as yielded by iter_match_history) belongs to the VCT
     circuit: its history-page event label contains one of CIRCUIT_KEYWORDS and
     its URL isn't an excluded showmatch/main-event."""
@@ -55,7 +60,7 @@ def is_circuit_match(match: Dict[str, str]) -> bool:
 def _cached_soup(
     url: str,
     session: httpx.Client,
-    cache: Optional[Dict[str, BeautifulSoup]] = None,
+    cache: Optional[dict[str, BeautifulSoup]] = None,
 ) -> BeautifulSoup:
     """get_soup with an optional in-memory cache keyed by URL, so a match page
     shared across several players is fetched only once."""
@@ -78,7 +83,7 @@ def iter_match_history(
     player_url: str,
     session: httpx.Client,
     delay: float = 1.0,
-) -> Iterator[Dict[str, str]]:
+) -> Iterator[dict[str, str]]:
     """Yield {match_url, match_id, event_label} for every match in the
     player's history, walking the paginated /player/matches/ view until an
     empty page is reached."""
@@ -143,12 +148,12 @@ def match_event_title(soup: BeautifulSoup) -> str:
     return header.get_text(" ", strip=True)
 
 
-def parse_scoreboard_players(soup: BeautifulSoup) -> List[Dict[str, str]]:
+def parse_scoreboard_players(soup: BeautifulSoup) -> List[dict[str, str]]:
     """Given a fetched match page, return [{id, ign, tag}] for every player on
     the scoreboard (both teams), de-duplicated by player id. `tag` is the team
     tag shown on each row (e.g. "MIBR"), which identifies the player's team in
     this match."""
-    players: Dict[str, Dict[str, str]] = {}
+    players: dict[str, dict[str, str]] = {}
     # Rows repeat per map (All maps + each map tab); dedupe by player id.
     for row in soup.select(".ovw-player"):
         link = row.select_one("a[href^='/player/']")
@@ -173,7 +178,7 @@ def parse_scoreboard_players(soup: BeautifulSoup) -> List[Dict[str, str]]:
 def parse_scoreboard_teammates(
     soup: BeautifulSoup,
     player_id: str,
-) -> List[Dict[str, str]]:
+) -> List[dict[str, str]]:
     """Given a fetched match page, return [{id, ign}] for the players on the
     same team as `player_id` (excluding the player themselves), read from the
     scoreboard. De-duplicated by player id across the match's maps.
@@ -193,25 +198,109 @@ def parse_scoreboard_teammates(
         if r["id"] != player_id and r["tag"] in my_tags and r["ign"]
     ]
 
-
 def get_match_teammates(
     match_url: str,
     player_id: str,
     session: httpx.Client,
-) -> List[Dict[str, str]]:
+) -> List[dict[str, str]]:
     """Fetch a match page and return [{id, ign}] for the players on the same
     team as `player_id` (excluding the player themselves)."""
     soup = get_soup(match_url, session)
     return parse_scoreboard_teammates(soup, player_id)
+
+def get_id_from_url(
+    player_url: str
+) -> int:
+    path = urlsplit(player_url).path
+    segments = [segment for segment in path.split('/') if segment]
+    if len(segments) >= 2:
+        return segments[-2]
+    return None
+
+def get_last_match(
+    player_url: str,
+    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db")
+) -> str:
+    last_match = None
+    db = sqlite3.connect(db_path)
+    cur = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (PLAYER_META_TABLE_NAME,)
+    )
+    if cur.fetchone() is not None:
+        try:
+            cur = db.execute(
+                f"SELECT last_match_url FROM {PLAYER_META_TABLE_NAME} WHERE player_id = ?",
+                (get_id_from_url(player_url),)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+        except sqlite3.OperationalError:
+            return None
+    else:
+        db.execute(
+            f"CREATE TABLE {PLAYER_META_TABLE_NAME} ( player_id INT PRIMARY KEY, last_match_url VARCHAR(n) );"
+        )
+    return last_match
+
+def append_saved_data(
+    player_id: str,
+    teammate_dict: dict[str, dict[str, object]],
+    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db")
+) -> None:
+    new_data = dict()
+    db = sqlite3.connect(db_path)
+    cursor = db.execute(
+        f"SELECT teammate_id, teammate_ign, count FROM {PLAYER_TEAMMATE_TABLE_NAME} WHERE player_id = ?",
+        (player_id,)
+    )
+    new_data = cursor.fetchall()
+    db.close()
+    
+    for teammate, ign, extra in new_data:
+        if teammate in teammate_dict:
+            teammate_dict[teammate]["matches"] = teammate_dict[teammate]["matches"] + extra
+        else:
+            teammate_dict[teammate] = {"matches": extra, "ign": ign}
+        teammate_dict[teammate]["matches"] = teammate_dict.get(teammate, dict()).get("matches", 0) + extra
+
+def update_saved_data(
+    player_id: str,
+    teammate_dict: dict[str, dict[str, object]],
+    last_match: str,
+    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db")
+) -> None:
+    db = sqlite3.connect(db_path)
+    try:
+        for teammate_id, data in teammate_dict.items():
+            db.execute(
+                f"INSERT OR REPLACE INTO {PLAYER_TEAMMATE_TABLE_NAME} (player_id, teammate_id, teammate_ign, count) VALUES (?, ?, ?, ?)",
+                (player_id, teammate_id, data["ign"], data["matches"])
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+        
+    try:
+        db.execute(
+            f"INSERT OR REPLACE INTO {PLAYER_META_TABLE_NAME} (player_id, last_match_url) VALUES (?, ?)",
+            (player_id, last_match)
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def get_teammate_map(
     player_url: str,
     session: httpx.Client,
     delay: float = 0.2,
-    cache: Optional[Dict[str, BeautifulSoup]] = None,
+    cache: Optional[dict[str, BeautifulSoup]] = None,
+    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db"),
     verbose: bool = False,
-) -> Dict[str, Dict[str, object]]:
+) -> dict[str, dict[str, object]]:
     """Walk a player's entire match history and return every player who has
     been on the same team as them in a VCT-circuit match (see is_circuit_match),
     keyed by player id:
@@ -232,12 +321,21 @@ def get_teammate_map(
     ]
     if verbose:
         print(f"Found {len(circuit_matches)} VCT matches for {player_url}")
+    
+    last_match = get_last_match(player_url, db_path)
 
-    teammates: Dict[str, Dict[str, object]] = {}
+    teammates: dict[str, dict[str, object]] = {}
     for i, m in enumerate(circuit_matches):
         if verbose:
             print(f"[{i + 1}/{len(circuit_matches)}] "
                   f"{m['event_label']} — {m['match_url']}")
+        
+        if last_match == m['match_url']:
+            if verbose:
+                print(    f"{m['match_url']} has been found in database.\n    Filling rest of data from database")
+            append_saved_data(get_id_from_url(player_url), teammates, db_path)
+            break
+
         try:
             soup = _cached_soup(m["match_url"], session, cache)
         except httpx.HTTPError as e:
@@ -251,5 +349,6 @@ def get_teammate_map(
 
         if delay:
             time.sleep(delay)  # be polite to vlr.gg
-
+    cur_last_match = circuit_matches[0]["match_url"]
+    update_saved_data(get_id_from_url(player_url), teammates, cur_last_match, db_path)
     return teammates
