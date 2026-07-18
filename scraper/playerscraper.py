@@ -23,6 +23,7 @@ Requires:
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 import time
@@ -33,30 +34,19 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-BASE_URL = "https://www.vlr.gg"
-DEFAULT_EVENT_URL = "https://www.vlr.gg/event/2977/vct-2026-americas-stage-2"
+# Read shared configuration from the repo-root scrape_defaults.py.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-HEADERS = {
-    # vlr.gg will happily serve a default python-requests UA, but a normal
-    # browser UA is friendlier / less likely to be treated as a bot.
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    )
-}
-
-# Keywords that mark a roster entry as staff rather than a player.
-STAFF_KEYWORDS = (
-    "manager",
-    "head coach",
-    "assistant coach",
-    "coach",
-    "analyst",
-    "owner",
-    "director",
-    "csm",
-    "content",
-    "founder",
+from scrape_defaults import (  # noqa: E402
+    BASE_URL,
+    DEFAULT_EVENT_URL,
+    DEFAULT_PLAYERS_CSV,
+    HEADERS,
+    QUERY_DELAY_DEFAULT,
+    REQUEST_TIMEOUT_SECONDS,
+    STAFF_KEYWORDS,
 )
 
 
@@ -72,7 +62,7 @@ class Player:
 
 
 def get_soup(url: str, session: httpx.Client) -> BeautifulSoup:
-    resp = session.get(url, headers=HEADERS, timeout=20)
+    resp = session.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
     resp.raise_for_status()
     return BeautifulSoup(resp.text, "html.parser")
 
@@ -207,8 +197,8 @@ def get_roster(team: dict, session: httpx.Client) -> List[Player]:
     return players
 
 
-def scrape(event_url: str, delay: float = 1.0, verbose: bool = True) -> List[Player]:
-    session = httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True)
+def scrape(event_url: str, delay: float = QUERY_DELAY_DEFAULT, verbose: bool = True) -> List[Player]:
+    session = httpx.Client(headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True)
     teams = get_teams(event_url, session)
 
     if not teams:
@@ -275,9 +265,9 @@ def write_json(players: List[Player], path: str):
 def main():
     parser = argparse.ArgumentParser(description="Scrape all player rosters from a VLR.gg event.")
     parser.add_argument("--url", default=DEFAULT_EVENT_URL, help="VLR.gg event URL")
-    parser.add_argument("--out", default="data/players.csv", help="Output CSV path")
+    parser.add_argument("--out", default=DEFAULT_PLAYERS_CSV, help="Output CSV path")
     parser.add_argument("--json", default=None, help="Optional output JSON path")
-    parser.add_argument("--delay", type=float, default=1.0, help="Delay between requests (seconds)")
+    parser.add_argument("--delay", type=float, default=QUERY_DELAY_DEFAULT, help="Delay between requests (seconds)")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 

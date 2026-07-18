@@ -35,14 +35,25 @@ import networkx as nx
 
 import sqlite3
 
-# Make the scraper package importable (matches.py, vlr_utils.py).
-_SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scraper")
-if _SCRAPER_DIR not in sys.path:
-    sys.path.insert(0, _SCRAPER_DIR)
+# Make the scraper package (matches.py, vlr_utils.py) and the repo-root
+# scrape_defaults.py importable.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SCRAPER_DIR = os.path.join(_REPO_ROOT, "scraper")
+for _p in (_REPO_ROOT, _SCRAPER_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from vlr_utils import BASE_URL, make_client  # type: ignore
 from matches import get_teammate_map  # type: ignore
 from vlr_event import get_event_players, parse_event  # noqa: E402
+from scrape_defaults import (  # noqa: E402
+    DEFAULT_DB_PATH,
+    GRAPH_NODE_COLOR,
+    MINIMUM_MATCH_DEFAULT,
+    PLAYER_META_TABLE_NAME,
+    PLAYER_TEAMMATE_TABLE_NAME,
+    QUERY_DELAY_DEFAULT,
+)
 """
 SQL Schema
 ┌───────────────────────────────┐
@@ -63,11 +74,11 @@ SQL Schema
 └───────────────────────────────┘
 """
 def get_previous_teammates(
-    player_url: str, 
-    session: httpx.Client, 
-    delay: float = 0.2, 
-    cache: dict[str, object] = {}, 
-    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/playerdata.db"),
+    player_url: str,
+    session: httpx.Client,
+    delay: float = QUERY_DELAY_DEFAULT,
+    cache: dict[str, object] = {},
+    db_path: str = DEFAULT_DB_PATH,
     verbose=False
 ) -> dict[str, dict[str, object]]:
     """Get previous teammates of given player. Queries only up until last queried match stored in SQL database
@@ -76,15 +87,15 @@ def get_previous_teammates(
     # check if tables exist, and if not, generates tables
     db = sqlite3.connect(db_path)
     cursor = db.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {PLAYER_META_TABLE_NAME} (
             player_id TEXT NOT NULL PRIMARY KEY,
             last_match_url TEXT
         );
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS teammates (
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {PLAYER_TEAMMATE_TABLE_NAME} (
             player_id   TEXT NOT NULL,
             teammate_id   TEXT NOT NULL,
             teammate_ign  TEXT NOT NULL,
@@ -103,8 +114,8 @@ def get_previous_teammates(
 def build_teammate_graph(
     event_url: str,
     session: httpx.Client,
-    min_matches: int = 1,
-    delay: float = 0.2,
+    min_matches: int = MINIMUM_MATCH_DEFAULT,
+    delay: float = QUERY_DELAY_DEFAULT,
     verbose: bool = True,
 ) -> nx.Graph:
     """Build and return the event's teammate-connectivity graph (see module
@@ -170,7 +181,7 @@ def draw_graph(graph: nx.Graph, path: str):
     node_sizes = [200 + 120 * degrees[n] for n in graph.nodes()]
     nx.draw_networkx_edges(graph, pos, alpha=0.25)
     nx.draw_networkx_nodes(graph, pos, node_size=node_sizes,
-                           node_color="#4c78a8", alpha=0.9)
+                           node_color=GRAPH_NODE_COLOR, alpha=0.9)
     nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
     plt.axis("off")
     plt.tight_layout()
@@ -204,10 +215,12 @@ def main():
                              "<event-slug>_teammates.graphml)")
     parser.add_argument("--draw", default=None,
                         help="Optional PNG path to render the graph (needs matplotlib)")
-    parser.add_argument("--min-matches", type=int, default=1,
-                        help="Minimum shared VCT matches for an edge (default: 1)")
-    parser.add_argument("--delay", type=float, default=0.2,
-                        help="Delay between requests in seconds (default: 0.2)")
+    parser.add_argument("--min-matches", type=int, default=MINIMUM_MATCH_DEFAULT,
+                        help="Minimum shared VCT matches for an edge "
+                             f"(default: {MINIMUM_MATCH_DEFAULT})")
+    parser.add_argument("--delay", type=float, default=QUERY_DELAY_DEFAULT,
+                        help="Delay between requests in seconds "
+                             f"(default: {QUERY_DELAY_DEFAULT})")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 
