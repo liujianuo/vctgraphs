@@ -268,7 +268,6 @@ def append_saved_data(
             teammate_dict[teammate]["matches"] = teammate_dict[teammate]["matches"] + extra
         else:
             teammate_dict[teammate] = {"matches": extra, "ign": ign}
-        teammate_dict[teammate]["matches"] = teammate_dict.get(teammate, dict()).get("matches", 0) + extra
 
 def update_saved_data(
     player_id: str,
