@@ -1,4 +1,14 @@
+# vctgraphs runtime dependencies (Python 3.10+)
+# Everything else the project uses (argparse, csv, json, math, os, re,
+# sqlite3, sys, time, urllib) is part of the standard library.
+
+# Scraping: HTTP client and HTML parsing.
 httpx>=0.27
 beautifulsoup4>=4.12
+
+# Graph building / serialization (GraphML).
 networkx>=3.0
+
+# Rendering only — required for `teammate_graph.py --draw`; the scrape and
+# graph-build steps run without it.
 matplotlib>=3.7
