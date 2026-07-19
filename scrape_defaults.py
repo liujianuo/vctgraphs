@@ -50,7 +50,7 @@ QUERY_DELAY_DEFAULT = 0.5
 # Event-label / URL rules for what counts as a "VCT circuit" match. Kept in one
 # place so the scraper and the analysis graph builder agree on which matches
 # define a "previous teammate".
-CIRCUIT_KEYWORDS = ("vct", "champions", "masters", "ewc", "vcl", "challengers")
+CIRCUIT_KEYWORDS = ("vct", "champions", "masters", "ewc", "vcl", "challengers", "evo", "evolution")
 EXCLUDE_URL_SUBSTRINGS = ("showmatch", "main-event")
 
 # Keywords that mark a team-roster entry as staff rather than a player.
