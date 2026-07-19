@@ -2,21 +2,11 @@
 
 Scrape [vlr.gg](https://www.vlr.gg) and build player-connectivity graphs for
 VCT events — nodes are the players in an event, and an edge connects two of
-them whenever they've been teammates in a VCT-circuit match (this event or any
-earlier one). Edge weight is the number of matches they shared a team in.
-
-The repo ships pre-built graphs and renders for several 2026 regions:
-`vct_america`, `vct_emea`, `vct_pac`, and `vct_cn` (each as a `.graphml` plus a
-`.png`).
+them whenever they've been teammates in a VCT-circuit match.
 
 ## Install
 
 Requires Python 3.10+.
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
 
 `matplotlib` is only needed to render graphs to PNG (`--draw`); scraping and
 graph-building work without it.
@@ -43,6 +33,10 @@ Options:
   (default: 0.5)
 - `--quiet` — suppress progress output
 
+#### Notes:
+
+Process tends be killed after ~40 players scraped. Finished player data is stored (considering last match read). Simply re-run the prompt to finish scraping all players.
+
 ### Scrape an event roster
 
 `playerscraper.py` pulls the current roster (team, IGN, real name, role,
@@ -52,6 +46,10 @@ country) for every team in an event.
 python scraper/playerscraper.py --url https://www.vlr.gg/event/2977/vct-2026-americas-stage-2 \
     --out data/players.csv --json data/players.json
 ```
+
+## Graph Generation
+
+Graph generation defaults can also be found in `scrape_defaults.py`. At generation time, minimum matches together can be edited to prevent connecting stand-ins, short-term loans, etc. Edge weight is heavier for players who have played for longer together. Minimum and maximum edge weight can also be found in `scrape_defaults.py`.
 
 ## Layout
 
