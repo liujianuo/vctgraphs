@@ -35,10 +35,12 @@ from matches import parse_scoreboard_players  # noqa: E402
 from scrape_defaults import QUERY_DELAY_DEFAULT  # noqa: E402
 
 
-def parse_event(event_url: str):
+def parse_event(event_url: str, verbose: bool = False):
     """Return (event_id, slug) parsed from any vlr.gg event URL, e.g.
     'https://www.vlr.gg/event/2860/vct-2026-americas-stage-1' or its
     '/event/matches/2860/...' variant."""
+    if verbose:
+        print(f"Searching event url: {event_url}")
     m = re.search(r"/event/(?:matches/)?(\d+)/([\w-]+)", event_url)
     if not m:
         raise ValueError(f"Could not parse an event id from URL: {event_url}")

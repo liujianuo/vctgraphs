@@ -15,8 +15,8 @@ graph-building work without it.
 
 ### Build a teammate graph for an event
 
-Point `teammate_graph.py` at a vlr.gg event URL. It reads every player in the
-event, walks each one's full VCT match history, and builds the connectivity
+Point `teammate_graph.py` at one or more vlr.gg event URLs. It reads every player in any of the
+events, walks each one's full VCT match history, and builds the connectivity
 graph.
 
 ```bash

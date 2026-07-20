@@ -60,6 +60,7 @@ from scrape_defaults import (  # noqa: E402
     PLAYER_META_TABLE_NAME,
     PLAYER_TEAMMATE_TABLE_NAME,
     QUERY_DELAY_DEFAULT,
+    OUTPUT_FILE_DIRECTORY
 )
 """
 SQL Schema
@@ -119,7 +120,7 @@ def get_previous_teammates(
 
 
 def build_teammate_graph(
-    event_url: str,
+    event_urls: list[str],
     session: httpx.Client,
     min_matches: int = MINIMUM_MATCH_DEFAULT,
     delay: float = QUERY_DELAY_DEFAULT,
@@ -133,7 +134,15 @@ def build_teammate_graph(
     # them saves a large number of requests.
     cache: dict[str, object] = {}
 
-    players = get_event_players(event_url, session, cache, delay=delay, verbose=verbose)
+    if verbose:
+        print(f"Searching the following events:")
+        for url in event_urls:
+            print(url)
+
+    players = dict()
+    for url in event_urls:
+        players.update(get_event_players(url, session, cache, delay=delay, verbose=verbose))
+    
     if verbose:
         print(f"\n{len(players)} players played in this event.\n")
 
@@ -339,12 +348,15 @@ def print_summary(graph: nx.Graph):
 def main():
     parser = argparse.ArgumentParser(
         description="Build a teammate-connectivity graph for a vlr.gg event.")
-    parser.add_argument("event_url", help="vlr.gg event URL")
+    parser.add_argument("event_url", nargs="+", help="vlr.gg event URL (pass one or more)")
     parser.add_argument("--out", default=None,
                         help="Output GraphML path (default: analysis/output/"
-                             "<event-slug>_teammates.graphml)")
+                             "vct_teammates.graphml)")
     parser.add_argument("--draw", default=None,
                         help="Optional PNG path to render the graph (needs matplotlib)")
+    parser.add_argument("--largest-component", action="store_true",
+                        help="When drawing, render only the largest connected "
+                             "component (the full graph is still written to GraphML)")
     parser.add_argument("--min-matches", type=int, default=MINIMUM_MATCH_DEFAULT,
                         help="Minimum shared VCT matches for an edge "
                              f"(default: {MINIMUM_MATCH_DEFAULT})")
@@ -354,12 +366,11 @@ def main():
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 
-    _, slug = parse_event(args.event_url)
     out_path = args.out
     if out_path is None:
         out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
         os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"{slug}_teammates.graphml")
+        out_path = os.path.join(out_dir, OUTPUT_FILE_DIRECTORY)
 
     session = make_client()
     try:
@@ -377,7 +388,13 @@ def main():
     print(f"\nWrote graph to {out_path}")
 
     if args.draw:
-        draw_graph(graph, args.draw)
+        to_draw = graph
+        if args.largest_component and graph.number_of_nodes():
+            largest = max(nx.connected_components(graph), key=len)
+            to_draw = graph.subgraph(largest)
+            print(f"Drawing largest connected component only "
+                  f"({to_draw.number_of_nodes()} of {graph.number_of_nodes()} players)")
+        draw_graph(to_draw, args.draw)
         print(f"Wrote drawing to {args.draw}")
 
     print_summary(graph)

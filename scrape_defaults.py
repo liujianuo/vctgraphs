@@ -81,6 +81,7 @@ DEFAULT_DB_PATH = os.path.join(_REPO_ROOT, "data", "playerdata.db")
 # --- Default I/O locations ---------------------------------------------------
 
 DEFAULT_EVENT_URL = f"{BASE_URL}/event/2977/vct-2026-americas-stage-2"
+OUTPUT_FILE_DIRECTORY = "vct_teammates.graphml"
 DEFAULT_PLAYERS_CSV = os.path.join("data", "players.csv")
 
 
